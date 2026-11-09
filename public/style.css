@@ -68,11 +68,14 @@ kbd { font: inherit; font-size: .7em; opacity: .55; margin-left: .4em; }
 #room { height: 100%; display: flex; flex-direction: column; }
 header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: .75rem;
+  gap: .4rem .75rem;
   padding: .5rem 1rem;
 }
 header .push { margin-left: auto; }
+.volume { display: flex; align-items: center; gap: .3rem; }
+#volume { width: 5.5rem; }
 #net { color: var(--correct); }
 
 main {

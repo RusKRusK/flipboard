@@ -1,11 +1,12 @@
 import { Easel } from './easel.js';
-import { unlockAudio, playSound } from './sound.js';
+import { unlockAudio, playSound, setVolume } from './sound.js';
 
 const $ = (id) => document.getElementById(id);
 
 const PALETTE = ['#111111', '#e0312b', '#2368d8', '#1f9d4d', '#f08a00', '#8a3fc7', '#7a4a21', '#ffffff'];
 const SESSION_KEY = 'flipboard.session';
 const NAME_KEY = 'flipboard.name';
+const VOLUME_KEY = 'flipboard.volume';
 
 let ws = null;
 let session = readSession();
@@ -303,6 +304,12 @@ $('redo').addEventListener('click', () => easel.redo());
 $('clear').addEventListener('click', () => easel.clear());
 $('flip-btn').addEventListener('click', toggleOwnFlip);
 
+$('volume').addEventListener('input', (e) => {
+  setVolume(Number(e.target.value));
+  localStorage.setItem(VOLUME_KEY, e.target.value);
+});
+$('volume').addEventListener('change', () => playSound('correct'));
+
 $('master-btn').addEventListener('click', () => {
   send({ type: state.masterId === myId ? 'releaseMaster' : 'claimMaster' });
 });
@@ -364,6 +371,9 @@ addEventListener('keydown', (e) => {
   else if (e.code === 'KeyF' && !e.repeat) toggleOwnFlip();
   else if (/^Digit[1-8]$/.test(e.code)) setColor(PALETTE[Number(e.code.at(-1)) - 1]);
 });
+
+$('volume').value = localStorage.getItem(VOLUME_KEY) ?? 100;
+setVolume(Number($('volume').value));
 
 $('login-name').value = session?.name ?? localStorage.getItem(NAME_KEY) ?? '';
 $('login-room').value = session?.room ?? new URLSearchParams(location.search).get('room') ?? '';
