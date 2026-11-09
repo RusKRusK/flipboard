@@ -1,9 +1,12 @@
 # flipboard
 
+Cloudflare Workers + Durable Objects で動く。
+
 ```
-deno task start
+npm install
+npm run dev
 ```
 
-http://localhost:8000 を開く。ポートは環境変数 `PORT` で変更できる。
+http://localhost:8787 を開く。
 
-部屋の状態はメモリ上にのみ保持する。Deno Deploy に置く場合はアプリの Deployment Region を `us` か `eu` のどちらか一方に固定する。
+公開は `npm run deploy`（初回のみ `npx wrangler login`）。

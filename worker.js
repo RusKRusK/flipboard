@@ -1,26 +1,17 @@
+import { DurableObject } from 'cloudflare:workers';
+
 const MAX_NAME = 20;
 const MAX_ROOM = 32;
-const MAX_ROOMS = 100;
 const MAX_PLAYERS = 30;
-const MAX_MESSAGE = 8 * 1024 * 1024;
-const MAX_IMAGE = 7 * 1024 * 1024;
-const MAX_TOTAL_IMAGES = 256 * 1024 * 1024;
+const MAX_MESSAGE = 4 * 1024 * 1024;
+const MAX_IMAGE = 3 * 1024 * 1024;
+const MAX_ROOM_IMAGES = 32 * 1024 * 1024;
 const MAX_SCORE = 99999;
 const ROOM_GRACE_MS = 15 * 1000;
 const MASTER_GRACE_MS = 30 * 1000;
 const PLAYER_GRACE_MS = 10 * 60 * 1000;
+const STALE_MS = 90 * 1000;
 const PNG_PREFIX = 'data:image/png;base64,';
-
-const STATIC = {
-  '/': ['index.html', 'text/html; charset=utf-8'],
-  '/style.css': ['style.css', 'text/css; charset=utf-8'],
-  '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
-  '/easel.js': ['easel.js', 'text/javascript; charset=utf-8'],
-  '/sound.js': ['sound.js', 'text/javascript; charset=utf-8'],
-};
-
-const rooms = new Map();
-let imageBytes = 0;
 
 function clean(value, max) {
   if (typeof value !== 'string') return '';
@@ -60,8 +51,16 @@ function broadcastState(room) {
   });
 }
 
-function setImage(player, data) {
-  imageBytes += (data?.length ?? 0) - (player.image?.length ?? 0);
+function drop(ws, code) {
+  try {
+    ws.close(code);
+  } catch {
+    // すでに閉じている
+  }
+}
+
+function setImage(room, player, data) {
+  room.imageBytes += (data?.length ?? 0) - (player.image?.length ?? 0);
   player.image = data;
 }
 
@@ -81,47 +80,87 @@ function playersOf(room) {
 }
 
 function removePlayer(room, player) {
-  setImage(player, null);
+  setImage(room, player, null);
   room.players.delete(player.id);
   if (room.masterId === player.id) room.masterId = null;
 }
 
-function deleteRoom(room) {
+function createRoom() {
+  return {
+    id: '',
+    masterId: null,
+    locked: false,
+    epoch: 0,
+    players: new Map(),
+    imageBytes: 0,
+    removal: null,
+    sweeper: null,
+  };
+}
+
+function resetRoom(room) {
   clearTimeout(room.removal);
-  for (const p of room.players.values()) setImage(p, null);
-  rooms.delete(room.id);
+  clearInterval(room.sweeper);
+  room.removal = null;
+  room.sweeper = null;
+  room.masterId = null;
+  room.locked = false;
+  room.epoch = 0;
+  room.players.clear();
+  room.imageBytes = 0;
 }
 
 // 全員の接続が一斉に切れても、すぐ戻れば部屋が残るように少し待つ
 function settle(room) {
   if (room.players.size === 0) {
-    deleteRoom(room);
+    resetRoom(room);
     return;
   }
   if (!room.removal && ![...room.players.values()].some((p) => p.ws)) {
-    room.removal = setTimeout(() => deleteRoom(room), ROOM_GRACE_MS);
+    room.removal = setTimeout(() => resetRoom(room), ROOM_GRACE_MS);
   }
   broadcastState(room);
 }
 
-function join(ws, msg) {
+function markGone(player, now) {
+  player.ws.player = null;
+  player.ws = null;
+  player.goneAt = now;
+}
+
+function sweep(room) {
+  const now = Date.now();
+  let changed = false;
+  for (const p of room.players.values()) {
+    if (p.ws && now - p.seenAt > STALE_MS) {
+      const { ws } = p;
+      markGone(p, now);
+      drop(ws, 1011);
+      changed = true;
+    }
+  }
+  // 切断したままのマスターは席を空け、部屋が操作不能にならないようにする
+  const master = room.players.get(room.masterId);
+  if (master && !master.ws && now - master.goneAt > MASTER_GRACE_MS) {
+    room.masterId = null;
+    changed = true;
+  }
+  for (const p of room.players.values()) {
+    if (!p.ws && now - p.goneAt > PLAYER_GRACE_MS) {
+      removePlayer(room, p);
+      changed = true;
+    }
+  }
+  if (changed) settle(room);
+}
+
+function join(ws, room, msg) {
   if (ws.player) return;
   const name = clean(msg.name, MAX_NAME);
-  const roomId = clean(msg.room, MAX_ROOM);
   const token = clean(msg.token, 64);
-  if (!name || !roomId || !token) {
+  if (!name || !token) {
     send(ws, { type: 'error', message: '名前とRoom IDを入力してください' });
     return;
-  }
-
-  let room = rooms.get(roomId);
-  if (!room) {
-    if (rooms.size >= MAX_ROOMS) {
-      send(ws, { type: 'error', message: '部屋がいっぱいです' });
-      return;
-    }
-    room = { id: roomId, masterId: null, locked: false, epoch: 0, players: new Map(), removal: null };
-    rooms.set(roomId, room);
   }
 
   const everyone = [...room.players.values()];
@@ -134,8 +173,9 @@ function join(ws, msg) {
   let player = everyone.find((p) => p.token === token) ?? everyone.find((p) => p.name === name);
   if (player) {
     if (player.ws && player.ws !== ws) {
-      player.ws.player = null;
-      player.ws.close(4000);
+      const old = player.ws;
+      old.player = null;
+      drop(old, 4000);
     }
     player.token = token;
     player.name = name;
@@ -158,16 +198,18 @@ function join(ws, msg) {
       judgement: null,
       ws: null,
       goneAt: 0,
+      seenAt: 0,
     };
     room.players.set(player.id, player);
   }
 
   clearTimeout(room.removal);
   room.removal = null;
+  room.sweeper ??= setInterval(() => sweep(room), 5 * 1000);
   player.ws = ws;
   player.goneAt = 0;
+  player.seenAt = Date.now();
   ws.player = player;
-  ws.room = room;
 
   send(ws, { type: 'joined', id: player.id, epoch: room.epoch, image: player.image });
   for (const p of room.players.values()) {
@@ -176,11 +218,9 @@ function join(ws, msg) {
   broadcastState(room);
 }
 
-function leave(ws) {
-  const { room, player } = ws;
-  if (!player) return;
+function leave(ws, room) {
+  const { player } = ws;
   ws.player = null;
-  ws.room = null;
   removePlayer(room, player);
   settle(room);
 }
@@ -212,7 +252,7 @@ const masterActions = {
   resetFlips(room) {
     room.epoch += 1;
     for (const p of room.players.values()) {
-      setImage(p, null);
+      setImage(room, p, null);
       p.revealed = false;
       p.judgement = null;
     }
@@ -244,20 +284,21 @@ function receiveImage(ws, room, me, msg) {
     return;
   }
   if (typeof msg.data !== 'string' || !msg.data.startsWith(PNG_PREFIX) || msg.data.length > MAX_IMAGE) return;
-  if (imageBytes + msg.data.length - (me.image?.length ?? 0) > MAX_TOTAL_IMAGES) return;
-  setImage(me, msg.data);
+  if (room.imageBytes + msg.data.length - (me.image?.length ?? 0) > MAX_ROOM_IMAGES) return;
+  setImage(room, me, msg.data);
 }
 
-function handle(ws, msg) {
+function handle(ws, room, msg) {
   if (msg.type === 'join') {
-    join(ws, msg);
+    join(ws, room, msg);
     return;
   }
-  const { room, player: me } = ws;
+  const { player: me } = ws;
   if (!me) return;
+  me.seenAt = Date.now();
 
   if (msg.type === 'leave') {
-    leave(ws);
+    leave(ws, room);
   } else if (msg.type === 'image') {
     receiveImage(ws, room, me, msg);
   } else if (msg.type === 'sound') {
@@ -273,57 +314,45 @@ function handle(ws, msg) {
   }
 }
 
-function accept(ws) {
+function accept(ws, room) {
   ws.addEventListener('message', (e) => {
     if (typeof e.data !== 'string' || e.data.length > MAX_MESSAGE) return;
     try {
       const msg = JSON.parse(e.data);
-      if (msg && typeof msg === 'object') handle(ws, msg);
+      if (msg && typeof msg === 'object') handle(ws, room, msg);
     } catch (err) {
       console.error(err);
     }
   });
   ws.addEventListener('close', () => {
-    const { room, player } = ws;
+    const { player } = ws;
     if (!player || player.ws !== ws) return;
-    player.ws = null;
-    player.goneAt = Date.now();
+    markGone(player, Date.now());
     settle(room);
   });
 }
 
-// 切断したままのマスターは席を空け、部屋が操作不能にならないようにする
-setInterval(() => {
-  const now = Date.now();
-  for (const room of rooms.values()) {
-    let changed = false;
-    const master = room.players.get(room.masterId);
-    if (master && !master.ws && now - master.goneAt > MASTER_GRACE_MS) {
-      room.masterId = null;
-      changed = true;
-    }
-    for (const p of room.players.values()) {
-      if (!p.ws && now - p.goneAt > PLAYER_GRACE_MS) {
-        removePlayer(room, p);
-        changed = true;
-      }
-    }
-    if (changed) broadcastState(room);
-  }
-}, 5 * 1000);
+// Room ID ごとに1つ作られ、同じ部屋の接続は必ずここに集まる
+export class Room extends DurableObject {
+  room = createRoom();
 
-async function serve(req) {
-  if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
-    const { socket, response } = Deno.upgradeWebSocket(req);
-    accept(socket);
-    return response;
+  fetch(request) {
+    this.room.id = clean(new URL(request.url).searchParams.get('room'), MAX_ROOM);
+    const [client, server] = Object.values(new WebSocketPair());
+    server.accept();
+    accept(server, this.room);
+    return new Response(null, { status: 101, webSocket: client });
   }
-  const path = new URL(req.url).pathname;
-  if (!Object.hasOwn(STATIC, path)) return new Response(null, { status: 404 });
-  const [file, type] = STATIC[path];
-  const body = await Deno.readFile(new URL(`./public/${file}`, import.meta.url));
-  return new Response(body, { headers: { 'Content-Type': type, 'Cache-Control': 'no-cache' } });
 }
 
-const port = Deno.env.get('PORT');
-Deno.serve(port ? { port: Number(port) } : {}, serve);
+export default {
+  fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname !== '/ws' || request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
+      return new Response(null, { status: 404 });
+    }
+    const roomId = clean(url.searchParams.get('room'), MAX_ROOM);
+    if (!roomId) return new Response(null, { status: 400 });
+    return env.ROOM.get(env.ROOM.idFromName(roomId)).fetch(request);
+  },
+};

@@ -54,19 +54,25 @@ function sendJoin() {
 }
 
 function connect() {
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
-  ws.onopen = () => {
+  if (!session || (ws && ws.readyState <= WebSocket.OPEN)) return;
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  const socket = new WebSocket(`${scheme}://${location.host}/ws?room=${encodeURIComponent(session.room)}`);
+  ws = socket;
+  socket.onopen = () => {
     $('net').hidden = true;
     sendJoin();
   };
-  ws.onmessage = (e) => receive(JSON.parse(e.data));
-  ws.onclose = (e) => {
+  socket.onmessage = (e) => receive(JSON.parse(e.data));
+  socket.onclose = (e) => {
+    if (socket !== ws) return;
     if (e.code === 4000) {
       backToLogin();
-      return;
+    } else if (!seated) {
+      backToLogin('接続できませんでした');
+    } else {
+      $('net').hidden = false;
+      setTimeout(connect, 1000);
     }
-    $('net').hidden = false;
-    setTimeout(connect, 1000);
   };
 }
 
@@ -110,6 +116,9 @@ function onJoined(msg) {
 }
 
 function backToLogin(message = '') {
+  const socket = ws;
+  ws = null;
+  socket?.close();
   writeSession(null);
   seated = false;
   state = null;
@@ -325,7 +334,7 @@ $('login-form').addEventListener('submit', (e) => {
   localStorage.setItem(NAME_KEY, name);
   $('login-error').textContent = '';
   writeSession({ name, room, token: newToken() });
-  sendJoin();
+  connect();
 });
 
 addEventListener('pointerdown', unlockAudio);
@@ -358,6 +367,9 @@ addEventListener('keydown', (e) => {
 
 $('login-name').value = session?.name ?? localStorage.getItem(NAME_KEY) ?? '';
 $('login-room').value = session?.room ?? new URLSearchParams(location.search).get('room') ?? '';
+
+// サーバーが無反応な接続を見分けられるように定期的に送る
+setInterval(() => send({ type: 'ping' }), 25 * 1000);
 
 renderTools();
 connect();
