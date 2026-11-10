@@ -3,8 +3,8 @@
   --ink: #161616;
   --paper: #fff;
   --bg: #e8e6e0;
-  --correct: #e0312b;
-  --wrong: #2368d8;
+  --correct: #ff0000;
+  --wrong: #0000ff;
   font-family: "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif;
 }
 
