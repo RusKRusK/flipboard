@@ -1,4 +1,4 @@
-const FILES = { correct: '/o.mp3', wrong: '/x.mp3' };
+const FILES = { question: '/q.mp3', question2: '/q2.mp3', correct: '/o.mp3', wrong: '/x.mp3' };
 
 const sounds = {};
 let ctx;

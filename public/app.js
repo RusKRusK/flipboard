@@ -3,7 +3,7 @@ import { unlockAudio, playSound, setVolume } from './sound.js';
 
 const $ = (id) => document.getElementById(id);
 
-const PALETTE = ['#111111', '#e0312b', '#2368d8', '#1f9d4d', '#f08a00', '#8a3fc7', '#7a4a21', '#ffffff'];
+const PALETTE = ['#111111', '#e0312b', '#2368d8', '#1f9d4d', '#f08a00', '#8a3fc7', '#7a4a21', '#dddddd'];
 const SESSION_KEY = 'flipboard.session';
 const NAME_KEY = 'flipboard.name';
 const VOLUME_KEY = 'flipboard.volume';
@@ -23,7 +23,10 @@ const swatches = [];
 const easel = new Easel({
   canvas: $('canvas'),
   brush: $('brush'),
-  onChange: (data) => send({ type: 'image', data, epoch }),
+  onChange: (data) => {
+    send({ type: 'image', data, epoch });
+    refreshTiles();
+  },
   onHistory: renderTools,
 });
 
@@ -85,6 +88,7 @@ function receive(msg) {
     case 'image':
       if (msg.data) images.set(msg.id, msg.data);
       else images.delete(msg.id);
+      refreshTiles();
       break;
     case 'restore':
       easel.load(msg.data);
@@ -140,6 +144,7 @@ function render(s) {
     epoch = s.epoch;
     easel.load(null);
     checked.clear();
+    images.clear();
   }
   state = s;
   const me = s.players.find((p) => p.id === myId);
@@ -174,7 +179,15 @@ function render(s) {
     flipBtn.append(key);
   }
 
+  // マスターでなくなったら、裏向きの絵は手元にも残さない
+  if (!isMaster) {
+    for (const p of s.players) if (!p.revealed) images.delete(p.id);
+  }
   renderTiles(s, isMaster);
+}
+
+function refreshTiles() {
+  if (state) renderTiles(state, state.masterId === myId);
 }
 
 function createTile(id) {
@@ -183,7 +196,8 @@ function createTile(id) {
   const tile = {
     el,
     front: q('.front'),
-    img: q('img'),
+    img: q('.front img'),
+    peek: q('.back img'),
     name: q('.name'),
     role: q('.role'),
     score: q('.score'),
@@ -232,9 +246,14 @@ function renderTiles(s, isMaster) {
     if (p.judgement) tile.front.dataset.j = p.judgement;
     else delete tile.front.dataset.j;
 
-    const src = p.revealed ? images.get(p.id) : null;
+    const data = p.id === myId ? easel.current : images.get(p.id);
+    const src = p.revealed ? data : null;
     tile.img.hidden = !src;
     if (src && tile.img.getAttribute('src') !== src) tile.img.src = src;
+    // マスターだけは裏面に薄く絵が見える
+    const peek = isMaster && !p.revealed ? data : null;
+    tile.peek.hidden = !peek;
+    if (peek && tile.peek.getAttribute('src') !== peek) tile.peek.src = peek;
 
     tile.name.textContent = p.name;
     tile.role.hidden = p.id !== s.masterId;
@@ -253,7 +272,6 @@ function renderTools() {
   $('tool-pen').setAttribute('aria-pressed', easel.tool === 'pen');
   $('tool-eraser').setAttribute('aria-pressed', easel.tool === 'eraser');
   for (const s of swatches) s.setAttribute('aria-pressed', s.dataset.color === easel.color);
-  $('color').value = easel.color;
   const range = $('width');
   range.value = easel.width;
   $('undo').disabled = !easel.canUndo;
@@ -295,7 +313,6 @@ for (const color of PALETTE) {
 
 $('tool-pen').addEventListener('click', () => setTool('pen'));
 $('tool-eraser').addEventListener('click', () => setTool('eraser'));
-$('color').addEventListener('input', (e) => setColor(e.target.value));
 $('width').addEventListener('input', (e) => {
   easel.width = Number(e.target.value);
 });
@@ -326,6 +343,8 @@ $('reset-flips').addEventListener('click', () => {
 $('lock').addEventListener('change', (e) => send({ type: 'setLocked', locked: e.target.checked }));
 $('judge').addEventListener('click', () => send({ type: 'judge', correct: [...checked] }));
 $('clear-judge').addEventListener('click', () => send({ type: 'clearJudge' }));
+$('snd-question').addEventListener('click', () => send({ type: 'sound', kind: 'question' }));
+$('snd-question2').addEventListener('click', () => send({ type: 'sound', kind: 'question2' }));
 $('snd-correct').addEventListener('click', () => send({ type: 'sound', kind: 'correct' }));
 $('snd-wrong').addEventListener('click', () => send({ type: 'sound', kind: 'wrong' }));
 $('reset-scores').addEventListener('click', () => {

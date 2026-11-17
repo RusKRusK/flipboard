@@ -101,7 +101,6 @@ main {
 #swatches { display: flex; gap: 2px; }
 .swatch { width: 1.6rem; height: 1.6rem; padding: 0; }
 .swatch[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: 1px; }
-#color { width: 1.8rem; height: 1.6rem; padding: 0; border: 0; background: none; }
 #width { width: 5.5rem; }
 
 #surface {
@@ -186,7 +185,8 @@ main {
   backface-visibility: hidden;
 }
 .front { background: var(--paper); }
-.front img { display: block; width: 100%; height: 100%; }
+.face img { display: block; width: 100%; height: 100%; }
+.back img { background: var(--paper); opacity: .45; }
 .back { background: #3a3a3a; transform: rotateY(180deg); }
 
 .who { display: flex; align-items: baseline; gap: .5rem; margin-top: .25rem; }

@@ -33,7 +33,6 @@
         <button id="tool-pen" title="ペン (B)">ペン<kbd>B</kbd></button>
         <button id="tool-eraser" title="消しゴム (E)">消しゴム<kbd>E</kbd></button>
         <span id="swatches"></span>
-        <input id="color" type="color" value="#111111" aria-label="色">
         <input id="width" type="range" min="1" max="120" title="太さ ([ / ])" aria-label="太さ">
         <button id="undo" title="元に戻す (Ctrl+Z)" aria-label="元に戻す">↶</button>
         <button id="redo" title="やり直す (Ctrl+Y)" aria-label="やり直す">↷</button>
@@ -60,6 +59,8 @@
           <button id="clear-judge">正誤クリア</button>
         </div>
         <div>
+          <button id="snd-question">出題1</button>
+          <button id="snd-question2">出題2</button>
           <button id="snd-correct" class="red">正解音</button>
           <button id="snd-wrong" class="blue">不正解音</button>
         </div>
@@ -77,7 +78,7 @@
     <div class="flip">
       <div class="flip-inner">
         <div class="face front"><img alt="" hidden></div>
-        <div class="face back"></div>
+        <div class="face back"><img alt="" hidden></div>
       </div>
     </div>
     <div class="who">

@@ -12,6 +12,7 @@ const MASTER_GRACE_MS = 30 * 1000;
 const PLAYER_GRACE_MS = 10 * 60 * 1000;
 const STALE_MS = 90 * 1000;
 const PNG_PREFIX = 'data:image/png;base64,';
+const SOUNDS = new Set(['question', 'question2', 'correct', 'wrong']);
 
 function clean(value, max) {
   if (typeof value !== 'string') return '';
@@ -213,7 +214,7 @@ function join(ws, room, msg) {
 
   send(ws, { type: 'joined', id: player.id, epoch: room.epoch, image: player.image });
   for (const p of room.players.values()) {
-    if (p.revealed) send(ws, { type: 'image', id: p.id, data: p.image });
+    if (p.revealed || room.masterId === player.id) send(ws, { type: 'image', id: p.id, data: p.image });
   }
   broadcastState(room);
 }
@@ -231,7 +232,11 @@ const playerActions = {
     setRevealed(room, me, Boolean(msg.revealed));
   },
   claimMaster(room, me) {
-    if (!room.masterId) room.masterId = me.id;
+    if (room.masterId) return;
+    room.masterId = me.id;
+    for (const p of room.players.values()) {
+      if (p.image) send(me.ws, { type: 'image', id: p.id, data: p.image });
+    }
   },
   releaseMaster(room, me) {
     if (room.masterId === me.id) room.masterId = null;
@@ -286,6 +291,9 @@ function receiveImage(ws, room, me, msg) {
   if (typeof msg.data !== 'string' || !msg.data.startsWith(PNG_PREFIX) || msg.data.length > MAX_IMAGE) return;
   if (room.imageBytes + msg.data.length - (me.image?.length ?? 0) > MAX_ROOM_IMAGES) return;
   setImage(room, me, msg.data);
+  // マスターは裏向きのフリップも見られるので、描くたびに届ける
+  const master = room.players.get(room.masterId);
+  if (master && master !== me) send(master.ws, { type: 'image', id: me.id, data: me.image });
 }
 
 function handle(ws, room, msg) {
@@ -302,7 +310,7 @@ function handle(ws, room, msg) {
   } else if (msg.type === 'image') {
     receiveImage(ws, room, me, msg);
   } else if (msg.type === 'sound') {
-    if (room.masterId === me.id && (msg.kind === 'correct' || msg.kind === 'wrong')) {
+    if (room.masterId === me.id && SOUNDS.has(msg.kind)) {
       broadcast(room, { type: 'sound', kind: msg.kind });
     }
   } else if (Object.hasOwn(playerActions, msg.type)) {
