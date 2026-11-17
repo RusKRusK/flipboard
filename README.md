@@ -1,5 +1,13 @@
 # flipboard
 
+Web上で使えるフリップボードです。
+
+## 使い方
+
+https://flipboard.ruskrusk.workers.dev にアクセスする。
+
+## 自分でビルドする場合
+
 Cloudflare Workers + Durable Objects で動く。
 
 ```
